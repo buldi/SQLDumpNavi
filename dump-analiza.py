@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
 import re
-
-# import os
+import os
 import subprocess
 import gzip
 import argparse
+from tabulate import tabulate
+from tqdm import tqdm  # Dodano moduł tqdm
 
 
 class SQLDumpAnalyzer:
@@ -20,16 +21,28 @@ class SQLDumpAnalyzer:
         else:
             file_opener = open
 
+        # Otwieramy plik i zliczamy liczbę linii (dla paska postępu)
+        with file_opener(self.dump_file, "rt", encoding="utf-8") as file:
+            total_lines = sum(1 for _ in file)  # Zliczanie linii w pliku
+
+        # Ponownie otwieramy plik do analizy
         with file_opener(self.dump_file, "rt", encoding="utf-8") as file:
             current_table = None
-            for line in file:
+            for line in tqdm(
+                file, total=total_lines, desc="Analyzing file", unit="lines"
+            ):
                 # Szukamy definicji tabel
                 create_table_match = re.match(
                     r"CREATE TABLE `?(?P<table_name>\w+)`?", line, re.IGNORECASE
                 )
                 if create_table_match:
                     current_table = create_table_match.group("table_name")
-                    self.tables[current_table] = {"columns": [], "data": []}
+                    self.tables[current_table] = {
+                        "columns": [],
+                        "data": [],
+                        "insert_count": 0,
+                        "estimated_size": 0,
+                    }
                     continue
 
                 # Szukamy kolumn w definicji tabeli
@@ -46,9 +59,31 @@ class SQLDumpAnalyzer:
                 if insert_match:
                     current_table = insert_match.group("table_name")
                     self.tables[current_table]["data"].append(line.strip())
+                    self.tables[current_table]["insert_count"] += 1
+
+        # Szacowanie rozmiaru danych
+        for table_name, table_info in self.tables.items():
+            if table_info["insert_count"] > 0:
+                # Średni rozmiar wiersza (w bajtach) - można dostosować
+                avg_row_size = (
+                    100  # Przykładowa wartość, można dostosować na podstawie danych
+                )
+                table_info["estimated_size"] = table_info["insert_count"] * avg_row_size
 
     def get_tables(self):
         return list(self.tables.keys())
+
+    def get_table_stats(self):
+        stats = []
+        for table_name, table_info in self.tables.items():
+            stats.append(
+                [
+                    table_name,
+                    table_info["insert_count"],
+                    f"{table_info['estimated_size'] / 1024:.2f} KB",  # Rozmiar w KB
+                ]
+            )
+        return stats
 
     def create_table(self, table_name, db_type="mysql"):
         if table_name not in self.tables:
@@ -79,7 +114,9 @@ class SQLDumpAnalyzer:
             raise ValueError(f"Table {table_name} not found in dump file.")
 
         data = self.tables[table_name]["data"]
-        for insert_statement in data:
+        for insert_statement in tqdm(
+            data, desc=f"Importing data into {table_name}", unit="rows"
+        ):
             if db_type == "mysql":
                 subprocess.run(
                     ["mysql", "-u", "username", "-p", "database_name"],
@@ -116,6 +153,11 @@ def main():
         default="mysql",
         help="Type of database (mysql or postgres, default: mysql)",
     )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show statistics about inserts and estimated data size",
+    )
 
     args = parser.parse_args()
 
@@ -125,6 +167,18 @@ def main():
 
     # Wyświetlenie dostępnych tabel
     print("Available tables:", analyzer.get_tables())
+
+    # Jeśli włączono statystyki, wyświetl je
+    if args.stats:
+        stats = analyzer.get_table_stats()
+        print("\nTable Statistics:")
+        print(
+            tabulate(
+                stats,
+                headers=["Table Name", "Insert Count", "Estimated Size"],
+                tablefmt="pretty",
+            )
+        )
 
     # Jeśli podano tabelę, tworzymy ją i importujemy dane
     if args.table:
