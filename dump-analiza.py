@@ -29,7 +29,7 @@ class SQLDumpAnalyzer:
         with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
             current_table = None
             for line in tqdm(file, total=total_lines, desc="Analyzing file", unit="lines"):
-                # Szukamy definicji tabel
+                # searching for table definitions 
                 create_table_match = re.match(r'CREATE TABLE `?(?P<table_name>\w+)`?', line, re.IGNORECASE)
                 if create_table_match:
                     current_table = create_table_match.group('table_name')
@@ -44,7 +44,7 @@ class SQLDumpAnalyzer:
                     self.tables[current_table]['insert_count'] += 1
                     continue
                 
-                # Szukamy kolumn w definicji tabeli
+                #  searching for column definitions in table
                 if current_table and re.match(r'\s*`?(?P<column_name>\w+)`?', line):
                     column_match = re.match(r'\s*`?(?P<column_name>\w+)`?', line)
                     self.tables[current_table]['columns'].append(column_match.group('column_name'))
@@ -145,7 +145,7 @@ class SQLDumpAnalyzer:
             print(f"Error importing data into table {table_name}: {e}")
 
 def main():
-    # Konfiguracja parsera argumentów
+    # Configuration of the program argument parser
     parser = argparse.ArgumentParser(description="Analyze SQL dump files and import data into MySQL or PostgreSQL.")
     parser.add_argument('dump_file', type=str, help="Path to the SQL dump file (supports .sql and .sql.gz)")
     parser.add_argument('--table', type=str, help="Name of the table to create and import data")
