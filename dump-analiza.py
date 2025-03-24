@@ -29,62 +29,44 @@ class SQLDumpAnalyzer:
         with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
             current_table = None
             for line in tqdm(file, total=total_lines, desc="Analyzing file", unit="lines"):
-                if create_table_match := re.match(
-                    r'CREATE TABLE `?(?P<table_name>\w+)`?', line, re.IGNORECASE
-                ):
-                    current_table. = create_table_match.group('table_name')
-                    # Zapisujemy pozycję początkową definicji tabeli
-                    start_pos = file.tell() - len(line.encode('utf-8'))
-                    self.tables[current_table] = {
-                        'columns': [],
-                        'data': [],
-                        'insert_count': 0,
-                        'estimated_size': 0,
-                        'create_table_start': start_pos,
-                        'create_table_end': None,
-                        'insert_positions': []  # Lista krotek (start, end) dla INSERT
-                    }
+                # Szukamy definicji tabel
+                create_table_match = re.match(r'CREATE TABLE `?(?P<table_name>\w+)`?', line, re.IGNORECASE)
+                if create_table_match:
+                    current_table = create_table_match.group('table_name')
+                    self.tables[current_table] = {'columns': [], 'data': [], 'insert_count': 0, 'estimated_size': 0}
                     continue
 
+                # search data for insert
+                insert_match = re.match(r'INSERT INTO `?(?P<table_name>\w+)`?', line, re.IGNORECASE)
+                if insert_match:
+                    current_table = insert_match.group('table_name')
+                    self.tables[current_table]['data'].append(line.strip())
+                    self.tables[current_table]['insert_count'] += 1
+                    continue
+                
                 # Szukamy kolumn w definicji tabeli
                 if current_table and re.match(r'\s*`?(?P<column_name>\w+)`?', line):
                     column_match = re.match(r'\s*`?(?P<column_name>\w+)`?', line)
                     self.tables[current_table]['columns'].append(column_match.group('column_name'))
 
-                # Szukamy końca definicji tabeli
-                if current_table and re.match(r'\);', line):
-                    # Zapisujemy pozycję końcową definicji tabeli
-                    self.tables[current_table]['create_table_end'] = file.tell()
-
-                # Szukamy danych do wstawienia
-                insert_match = re.match(r'INSERT INTO `?(?P<table_name>\w+)`?', line, re.IGNORECASE)
-                if insert_match:
-                    current_table = insert_match.group('table_name')
-                    # Zapisujemy pozycję początkową INSERT
-                    start_pos = file.tell() - len(line.encode('utf-8'))
-                    self.tables[current_table]['insert_positions'].append((start_pos, None))
-                    self.tables[current_table]['insert_count'] += 1
-
-                # Zapisujemy pozycję końcową INSERT
-                if current_table and self.tables[current_table]['insert_positions']:
-                    self.tables[current_table]['insert_positions'][-1] = (
-                        self.tables[current_table]['insert_positions'][-1][0],
-                        file.tell()
-                    )
+        # Szacowanie rozmiaru danych
+        for table_name, table_info in self.tables.items():
+            if table_info['insert_count'] > 0:
+                # Średni rozmiar wiersza (w bajtach) - można dostosować
+                avg_row_size = 100  # Przykładowa wartość, można dostosować na podstawie danych
+                table_info['estimated_size'] = table_info['insert_count'] * avg_row_size
 
     def get_tables(self):
         return list(self.tables.keys())
 
     def get_table_stats(self):
         stats = []
-        stats.extend(
-            [
+        for table_name, table_info in self.tables.items():
+            stats.append([
                 table_name,
                 table_info['insert_count'],
-                f"{table_info['estimated_size'] / 1024:.2f} KB",  # Rozmiar w KB - szacowany
-            ]
-            for table_name, table_info in self.tables.items()
-        )
+                f"{table_info['estimated_size'] / 1024:.2f} KB"  # Rozmiar w KB
+            ])
         # Sortowanie statystyk według kolumny "Insert Count" (od najmniejszej do największej)
         stats.sort(key=lambda x: x[1])  # x[1] to kolumna "Insert Count"
         return stats
@@ -93,17 +75,14 @@ class SQLDumpAnalyzer:
         if table_name not in self.tables:
             raise ValueError(f"Table {table_name} not found in dump file.")
 
-        # Otwieramy plik i odczytujemy oryginalną definicję tabeli
-        file_opener = gzip.open if self.dump_file.endswith('.gz') else open
-        with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
-            start_pos = self.tables[table_name]['create_table_start']
-            end_pos = self.tables[table_name]['create_table_end']
-            file.seek(start_pos)
-            create_table_sql = file.read(end_pos - start_pos)
+        columns = self.tables[table_name]['columns']
+        create_table_sql = f"CREATE TABLE {table_name} (\n"
+        create_table_sql += ",\n".join([f"    {col} VARCHAR(255)" for col in columns])
+        create_table_sql += "\n);"
 
         try:
             if db_type == 'mysql':
-                # Połączenie z MySQL za pomocą pymysql
+                # connect do MySQL using pymysql
                 connection = pymysql.connect(
                     host=host,
                     user=username,
@@ -111,7 +90,7 @@ class SQLDumpAnalyzer:
                     database=database_name
                 )
             elif db_type == 'postgres':
-                # Połączenie z PostgreSQL za pomocą pg8000
+                # connect to PostgreSQL using                                                                                                                                                                                                           pg8000
                 connection = pg8000.connect(
                     host=host,
                     user=username,
@@ -134,11 +113,10 @@ class SQLDumpAnalyzer:
         if table_name not in self.tables:
             raise ValueError(f"Table {table_name} not found in dump file.")
 
-        # Otwieramy plik i odczytujemy oryginalne INSERTy
-        file_opener = gzip.open if self.dump_file.endswith('.gz') else open
+        data = self.tables[table_name]['data']
         try:
             if db_type == 'mysql':
-                # Połączenie z MySQL za pomocą pymysql
+                # connect to MySQL using pymysql
                 connection = pymysql.connect(
                     host=host,
                     user=username,
@@ -146,7 +124,7 @@ class SQLDumpAnalyzer:
                     database=database_name
                 )
             elif db_type == 'postgres':
-                # Połączenie z PostgreSQL za pomocą pg8000
+                # connect to PostgreSQL using pg8000
                 connection = pg8000.connect(
                     host=host,
                     user=username,
@@ -157,11 +135,8 @@ class SQLDumpAnalyzer:
                 raise ValueError("Unsupported database type.")
 
             cursor = connection.cursor()
-            with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
-                for start_pos, end_pos in tqdm(self.tables[table_name]['insert_positions'], desc=f"Importing data into {table_name}", unit="rows"):
-                    file.seek(start_pos)
-                    insert_statement = file.read(end_pos - start_pos)
-                    cursor.execute(insert_statement)
+            for insert_statement in tqdm(data, desc=f"Importing data into {table_name}", unit="rows"):
+                cursor.execute(insert_statement)
             connection.commit()
             cursor.close()
             connection.close()
@@ -184,25 +159,26 @@ def main():
 
     args = parser.parse_args()
 
-    # Inicjalizacja analizatora
+    # Init analizer
     analyzer = SQLDumpAnalyzer(args.dump_file)
     analyzer.analyze()
 
-    # Wyświetlenie dostępnych tabel
+    # Display avaliable tabels
     print("Available tables:", analyzer.get_tables())
 
-    # Jeśli włączono statystyki, wyświetl je
+    # if enabled display statistics
     if args.stats:
         stats = analyzer.get_table_stats()
         print("\nTable Statistics:")
         print(tabulate(stats, headers=["Table Name", "Insert Count", "Estimated Size"], tablefmt="pretty"))
 
-    # Jeśli podano tabelę, tworzymy ją i importujemy dane
+    # if enabled table, create and import data
     if args.table:
         analyzer.create_table(args.table, args.db_type, args.username, args.password, args.database, args.host)
         analyzer.import_data(args.table, args.db_type, args.username, args.password, args.database, args.host)
     else:
         print("No table specified. Use --table to specify a table to create and import data.")
+
 
 if __name__ == "__main__":
     main()
