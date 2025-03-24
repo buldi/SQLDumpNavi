@@ -15,8 +15,12 @@ class SQLDumpAnalyzer:
         self.tables = {}
 
     def analyze(self):
-        # Sprawdzamy, czy plik jest skompresowany
-        # file_opener = gzip.open if self.dump_file.endswith('.gz') else open
+        # compressed file detections
+        if self.dump_file.endswith('.gz'):
+            file_opener = gzip.open
+        else:
+            file_opener = open
+
         # Otwieramy plik i zliczamy liczbę linii (dla paska postępu)
         with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
             total_lines = sum(1 for _ in file)  # Zliczanie linii w pliku
