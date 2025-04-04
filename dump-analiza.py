@@ -149,7 +149,15 @@ class SQLDumpAnalyzer:
                     )
 
     def get_tables(self):
-        return list(self.tables.keys())
+        if not self.tables:
+            return "No tables found in the dump file."
+
+        table_names = sorted(self.tables.keys())
+        output = ["\nAvailable Tables:"]
+        for idx, name in enumerate(table_names, 1):
+            output.append(f"{idx:3d}. {name}")
+        output.append(f"\nTotal tables: {len(table_names)}")
+        return "\n".join(output)
 
     def get_table_stats(self):
         stats = []
@@ -219,31 +227,36 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze SQL dump files and import data into MySQL or PostgreSQL.")
     parser.add_argument('dump_file', type=str, help="Path to the SQL dump file (supports .sql and .sql.gz)")
     parser.add_argument('--table', type=str, help="Name of the table to create and import data")
-    parser.add_argument('--db-type', type=str, choices=['mysql', 'postgres'], default='mysql')
-    parser.add_argument('--stats', action='store_true')
-    parser.add_argument('--username', type=str, required=True)
-    parser.add_argument('--password', type=str, required=True)
-    parser.add_argument('--database', type=str, required=True)
-    parser.add_argument('--host', type=str, default='localhost')
+    parser.add_argument('--db-type', type=str, choices=['mysql', 'postgres'], default='mysql',
+                        help="Type of database (default: mysql)")
+    parser.add_argument('--stats', action='store_true', help="Show statistics about inserts and estimated data size")
+    parser.add_argument('--username', type=str, help="Database username")
+    parser.add_argument('--password', type=str, help="Database password")
+    parser.add_argument('--database', type=str, help="Database name")
+    parser.add_argument('--host', type=str, default='localhost', help="Database host (default: localhost)")
 
     args = parser.parse_args()
 
     analyzer = SQLDumpAnalyzer(args.dump_file)
     analyzer.analyze()
 
-    if args.stats:
-        stats = analyzer.get_table_stats()
+    # Jeśli podano tylko plik dump bez --table, pokaż statystyki i dostępne tabele
+    if not args.table:
+        analyzer.get_tables()
         print("\nTable Statistics:")
+        stats = analyzer.get_table_stats()
         print(tabulate(stats, headers=["Table Name", "Insert Count", "Estimated Size"], tablefmt="pretty"))
-    else:
-        print("Available tables:", analyzer.get_tables())
+        return  # Zakończ program po analizie
 
-    if args.table:
-        analyzer.create_table(args.table, args.db_type, args.username, args.password, args.database, args.host)
-        analyzer.import_data(args.table, args.db_type, args.username, args.password, args.database, args.host)
-    else:
-        print("No table specified. Use --table to specify a table to create and import data.")
+    # Weryfikuj czy wymagane dane do połączenia są dostępne
+    required = [args.username, args.password, args.database]
+    if not all(required):
+        print("Error: --username, --password, and --database are required when using --table")
+        return
 
+    # Tworzenie tabeli i import
+    analyzer.create_table(args.table, args.db_type, args.username, args.password, args.database, args.host)
+    analyzer.import_data(args.table, args.db_type, args.username, args.password, args.database, args.host)
 
 if __name__ == "__main__":
     main()
