@@ -82,6 +82,17 @@ class PostgreSQLConnection:
         if self.connection:
             self.connection.close()
 
+class DBConnection:
+    @staticmethod
+    def create_connection(db_type, host, user, password, database):
+        if db_type == 'mysql':
+            return MySQLConnection(host, user, password, database)
+        elif db_type == 'mariadb':
+            return MariaDBConnection(host, user, password, database)
+        elif db_type == 'postgres':
+            return PostgreSQLConnection(host, user, password, database)
+        else:
+            raise ValueError(f"Unsupported database type: {db_type}")
 
 class SQLDumpAnalyzer:
     def __init__(self, dump_file):
@@ -184,12 +195,9 @@ class SQLDumpAnalyzer:
             create_table_sql = file.read(end_pos - start_pos)
 
         try:
-            if db_type == 'mysql':
-                connection = MySQLConnection(host, username, password, database_name)
-            elif db_type == 'postgres':
-                connection = PostgreSQLConnection(host, username, password, database_name)
-            else:
-                raise ValueError("Unsupported database type.")
+            connection = DBConnection.create_connection(
+                db_type, host, username, password, database_name
+            )
 
             connection.connect()
             connection.execute(create_table_sql)
@@ -205,12 +213,9 @@ class SQLDumpAnalyzer:
         file_opener = gzip.open if self.dump_file.endswith('.gz') else open
 
         try:
-            if db_type == 'mysql':
-                connection = MySQLConnection(host, username, password, database_name)
-            elif db_type == 'postgres':
-                connection = PostgreSQLConnection(host, username, password, database_name)
-            else:
-                raise ValueError("Unsupported database type.")
+            connection = DBConnection.create_connection(
+                db_type, host, username, password, database_name
+            )
 
             connection.connect()
             with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
