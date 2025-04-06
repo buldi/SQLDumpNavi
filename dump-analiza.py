@@ -2,6 +2,7 @@
 
 import re
 import os
+import bz2
 import gzip
 import argparse
 from tabulate import tabulate
