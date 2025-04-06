@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import re
-import os
+# import os
 import bz2
 import gzip
 import argparse
 from tabulate import tabulate
 from tqdm import tqdm
-import io  # brakujący import
+# import io  # brakujący import
 
 class MySQLConnection:
     def __init__(self, host, user, password, database):
@@ -95,12 +95,23 @@ class DBConnection:
             raise ValueError(f"Unsupported database type: {db_type}")
 
 class SQLDumpAnalyzer:
+
+    # FIXME: This function is not used magic number :(, change this
+    @staticmethod
+    def identify_dump_compression(file_path):
+        if file_path.endswith('.gz'):
+            return gzip.open
+        elif file_path.endswith('.bz2'):
+            return bz2.open
+        else:
+            return open
+    
     def __init__(self, dump_file):
         self.dump_file = dump_file
         self.tables = {}
 
-    def analyze(self):
-        file_opener = gzip.open if self.dump_file.endswith('.gz') else open
+    def analyze(self):        
+        file_opener = SQLDumpAnalyzer.identify_dump_compression(self.dump_file)
 
         with file_opener(self.dump_file, 'rt', encoding='utf-8') as file:
             total_lines = sum(1 for _ in file)
